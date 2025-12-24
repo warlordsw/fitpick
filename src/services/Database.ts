@@ -25,6 +25,7 @@ export const createTables = async (db: SQLite.SQLiteDatabase) => {
         image_path TEXT NOT NULL,
         category_id INTEGER,
         type TEXT, -- upper, lower, outer, shoes, accessory
+        sub_type TEXT, -- T-Shirt, Sweater, Hoodie, Jeans, etc.
         color_code TEXT,
         last_worn_date TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -45,6 +46,15 @@ export const createTables = async (db: SQLite.SQLiteDatabase) => {
     await db.executeSql(queryCategories);
     await db.executeSql(queryItems);
     await db.executeSql(queryOutfits);
+
+    // Migration: Add sub_type column if it doesn't exist
+    try {
+        await db.executeSql(`ALTER TABLE items ADD COLUMN sub_type TEXT;`);
+        console.log("Migration: Added sub_type column");
+    } catch (e: any) {
+        // Column likely exists, ignore error
+        // console.log("Migration check: sub_type likely exists");
+    }
 };
 
 export const initDatabase = async () => {

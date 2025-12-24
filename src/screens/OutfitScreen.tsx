@@ -92,7 +92,7 @@ const OutfitScreen = ({ navigation }: any) => {
     );
 
     return (
-        <ScrollView contentContainerStyle={commonStyles.container}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 50, paddingHorizontal: 16 }}>
             <Text style={theme.typography.h2}>Smart Combinations</Text>
             <Text style={{ color: '#aaa', marginBottom: 20 }}>Shake your phone to style!</Text>
 

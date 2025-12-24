@@ -1,11 +1,22 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert, ActivityIndicator } from 'react-native';
-import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert, ActivityIndicator, Modal, SafeAreaView } from 'react-native';
+// Replaced react-native-image-picker with react-native-image-crop-picker for better cropping support
+import ImagePicker from 'react-native-image-crop-picker';
 import RNFS from 'react-native-fs';
 import { WebView } from 'react-native-webview';
-import { getColors } from 'react-native-image-colors';
+// import { getColors } from 'react-native-image-colors'; // Removed due to Native Crash
+import ColorDetectorWebView from '../components/ColorDetectorWebView';
 import { theme, commonStyles } from '../styles/theme';
 import { getDBConnection } from '../services/Database';
+
+const subCategories: Record<string, string[]> = {
+    'Upper': ['T-Shirt', 'Shirt', 'Sweater', 'Hoodie', 'Tank Top', 'Blazer'],
+    'Lower': ['Jeans', 'Trousers', 'Shorts', 'Skirt', 'Sweatpants'],
+    'Outer': ['Jacket', 'Coat', 'Raincoat', 'Vest'],
+    'Shoes': ['Sneakers', 'Boots', 'Formal', 'Sandals', 'Heels']
+};
+
+const getSubCategories = (cat: string) => subCategories[cat] || [];
 
 const BackgroundRemoverWebView = ({ imageBase64, onProcessed, onError }: any) => {
     const webviewRef = useRef<WebView>(null);
@@ -101,73 +112,127 @@ const AddItemScreen = ({ navigation, route }: any) => {
     const [imageUri, setImageUri] = useState<string | null>(null);
     const [imageBase64Full, setImageBase64Full] = useState<string | null>(null);
     const [category, setCategory] = useState<string>(initialCategory || '');
+    const [subCategory, setSubCategory] = useState<string>('');
     const [color, setColor] = useState<string>(initialColor || '');
     const [isRemovingBackground, setIsRemovingBackground] = useState(false);
     const [shouldProcessBG, setShouldProcessBG] = useState(false);
     const [autoColorLoading, setAutoColorLoading] = useState(false);
+    const [shouldDetectColor, setShouldDetectColor] = useState(false);
+    const [showColorPicker, setShowColorPicker] = useState(false);
 
-    // Helper: Detect Color
-    const detectColor = async (uri: string) => {
-        setAutoColorLoading(true);
+    // Load Base64 for WebView (Interactive or Auto)
+    const loadBase64 = async (path: string) => {
         try {
-            // Re-enabled Auto-Color
-            const result = await getColors(uri, {
-                fallback: '#000000',
-                cache: true,
-                key: uri,
-            });
-
-            let detected = '#000000';
-            if (result.platform === 'android') {
-                detected = result.vibrant || result.dominant || result.average || '#000000';
-            } else if (result.platform === 'ios') {
-                detected = result.primary || result.background || '#000000';
-            }
-            setColor(detected);
+            const b64 = await RNFS.readFile(path, 'base64');
+            setImageBase64Full(`data:image/jpeg;base64,${b64}`);
+            // Do NOT set shouldDetectColor(true) automatically
         } catch (e) {
-            console.error('Color detection failed', e);
-        } finally {
-            setAutoColorLoading(false);
+            console.error("Failed to read image for color", e);
         }
     };
 
-    const handleTakePhoto = async () => {
-        // Updated options for Cropping
-        const result = await launchCamera({
-            mediaType: 'photo',
-            saveToPhotos: true,
-            includeBase64: false, // Don't need base64 here
-            quality: 0.8,
-            // allowsEditing: true // STILL DISABLED to isolate crash
-        });
+    // Initial Trigger for Color Detection (WebView) - Now just a helper if needed or removed
+    // We'll keep it compatible but changing behavior
+    const startColorDetection = async (path: string) => {
+        await loadBase64(path);
+        // setShouldDetectColor(true); // Disable auto-show
+    };
 
-        if (result.assets && result.assets.length > 0) {
-            const uri = result.assets[0].uri || null;
-            if (uri) {
-                setImageUri(uri);
-                setImageBase64Full(null);
-                setShouldProcessBG(false);
-                detectColor(uri); // ENABLED
-            }
+    // Callback when ColorDetectorWebView returns a color
+    const handleColorDetected = (detectedColor: string) => {
+        setShouldDetectColor(false);
+        setAutoColorLoading(false);
+        setColor(detectedColor);
+        // Only alert if NOT in interactive mode (to avoid spamming user while tapping)
+        if (!showColorPicker) {
+            Alert.alert('Color Detected! 🎨', `We found this color: ${detectedColor}`);
         }
+    };
+
+    // Obsolete detectColor removed
+
+
+
+
+    const handleTakePhoto = () => {
+        Alert.alert(
+            'Photography Tips 📸',
+            'For best results:\n\n1. Place item on a plain, solid background (like a white sheet).\n2. Ensure good lighting.\n3. Keep the item flat.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Open Camera', onPress: async () => {
+                        try {
+                            const image = await ImagePicker.openCamera({
+                                cropping: true,
+                                freeStyleCropEnabled: true, // Allow free-form cropping (rectangle)
+                                mediaType: 'photo',
+                                includeBase64: false,
+                                cropperToolbarTitle: 'Edit Photo',
+                                cropperActiveWidgetColor: theme.colors.primary,
+                                cropperStatusBarColor: theme.colors.background,
+                                cropperToolbarColor: theme.colors.surface,
+                                cropperToolbarWidgetColor: theme.colors.text,
+                                compressImageMaxWidth: 1080,
+                                compressImageMaxHeight: 1080,
+                                compressImageQuality: 0.8,
+                            });
+
+                            if (image && image.path) {
+                                // Determine URI (check if needs file:// prefix for some libs, usually path is fine)
+                                const uri = image.path;
+                                setImageUri(uri);
+                                setImageBase64Full(null);
+                                setShouldProcessBG(false);
+                                // MANUAL TRIGGER ONLY: No auto-detect here
+                                startColorDetection(uri); // Pre-load Base64 but don't auto-detect
+                                // Actually, startColorDetection sets shouldDetectColor=true which shows WebView.
+                                // We want to pre-load Base64 but NOT set shouldDetectColor=true yet?
+                                // Let's modify startColorDetection or just load base64 here.
+                                // Re-using startColorDetection but adding a flag?
+                                // Simpler: Just load base64 here so it's ready for interactive mode.
+
+                                loadBase64(uri);
+                            }
+                        } catch (e: any) {
+                            if (e.message !== 'User cancelled image selection') {
+                                Alert.alert('Error', e.message);
+                            }
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const handleChoosePhoto = async () => {
-        // Updated options for Cropping
-        const result = await launchImageLibrary({
-            mediaType: 'photo',
-            includeBase64: false,
-            quality: 0.8,
-            // allowsEditing: true // STILL DISABLED to isolate crash
-        });
+        try {
+            const image = await ImagePicker.openPicker({
+                cropping: true,
+                freeStyleCropEnabled: true, // Allow free-form cropping
+                mediaType: 'photo',
+                includeBase64: false,
+                cropperToolbarTitle: 'Edit Photo',
+                cropperActiveWidgetColor: theme.colors.primary,
+                cropperStatusBarColor: theme.colors.background,
+                cropperToolbarColor: theme.colors.surface,
+                cropperToolbarWidgetColor: theme.colors.text,
+                compressImageMaxWidth: 1080,
+                compressImageMaxHeight: 1080,
+                compressImageQuality: 0.8,
+            });
 
-        if (result.assets && result.assets.length > 0) {
-            const uri = result.assets[0].uri || null;
-            if (uri) {
+            if (image && image.path) {
+                const uri = image.path;
                 setImageUri(uri);
                 setImageBase64Full(null);
                 setShouldProcessBG(false);
-                detectColor(uri); // ENABLED
+                // setTimeout(() => { startColorDetection(uri); }, 500);
+                loadBase64(uri);
+            }
+        } catch (e: any) {
+            if (e.message !== 'User cancelled image selection') {
+                Alert.alert('Error', e.message);
             }
         }
     };
@@ -176,8 +241,12 @@ const AddItemScreen = ({ navigation, route }: any) => {
         if (!imageUri) return;
         setIsRemovingBackground(true);
         try {
-            // Strip file:// prefix if present for RNFS
-            const cleanUri = imageUri.startsWith('file://') ? imageUri.replace('file://', '') : imageUri;
+            // Strip file:// prefix if present for RNFS, though path usually doesn't have it from cropper
+            let cleanUri = imageUri;
+            if (cleanUri.startsWith('file://')) {
+                cleanUri = cleanUri.replace('file://', '');
+            }
+
             const b64 = await RNFS.readFile(cleanUri, 'base64');
             // Standard template literal with no escaping in tool call (unless tool escapes it, but I assume literal)
             setImageBase64Full(`data:image/jpeg;base64,${b64}`);
@@ -196,8 +265,6 @@ const AddItemScreen = ({ navigation, route }: any) => {
             await RNFS.writeFile(newPath, base64Data, 'base64');
             setImageUri(`file://${newPath}`);
             Alert.alert('Magic Complete!', 'Background removed successfully.');
-            // Re-detect color for processed image if needed? Or keep original.
-            // Let's keep original for now as BG removal might affect color detection (make it black).
         } catch (e: any) {
             console.error('Save error', e);
             Alert.alert('Error', 'Failed to save processed image: ' + e.message);
@@ -207,16 +274,34 @@ const AddItemScreen = ({ navigation, route }: any) => {
     };
 
     const saveItem = async () => {
-        if (!imageUri || !category) {
-            Alert.alert('Missing Info', 'Please select an image and a category.');
+        if (!imageUri) {
+            Alert.alert('Missing Image', 'Please select an image first.');
+            return;
+        }
+        if (!category) {
+            Alert.alert('Missing Category', 'Please select a category.');
+            return;
+        }
+        if (!color) {
+            Alert.alert(
+                'Color Required 🎨',
+                'Please detect the item color before saving.\n\nTap the Palette icon 🎨 and touch the image to pick a color.',
+                [
+                    {
+                        text: 'OK', onPress: () => {
+                            if (imageBase64Full) setShowColorPicker(true);
+                        }
+                    }
+                ]
+            );
             return;
         }
 
         try {
             const db = await getDBConnection();
             await db.executeSql(
-                `INSERT INTO items(image_path, type, color_code, created_at) VALUES(?, ?, ?, ?)`,
-                [imageUri, category, color || '#000000', new Date().toISOString()]
+                `INSERT INTO items(image_path, type, sub_type, color_code, created_at) VALUES(?, ?, ?, ?, ?)`,
+                [imageUri, category, subCategory || 'General', color || '#000000', new Date().toISOString()]
             );
             Alert.alert('Success', 'Item added to wardrobe!');
             navigation.goBack();
@@ -229,7 +314,7 @@ const AddItemScreen = ({ navigation, route }: any) => {
 
     return (
         <ScrollView style={commonStyles.container}>
-            <Text style={theme.typography.h2}>Add New Item</Text>
+            <Text style={theme.typography.h2 as any}>Add New Item</Text>
 
             <View style={styles.imageContainer}>
                 {imageUri ? (
@@ -240,7 +325,7 @@ const AddItemScreen = ({ navigation, route }: any) => {
                 {isRemovingBackground && (
                     <View style={styles.loadingOverlay}>
                         <ActivityIndicator size="large" color={theme.colors.primary} />
-                        <Text style={{ color: '#fff', marginTop: 10 }}>✨ Magic in progress...</Text>
+                        <Text style={{ color: '#fff', marginTop: 10 } as any}>✨ Magic in progress...</Text>
                     </View>
                 )}
                 {autoColorLoading && (
@@ -258,22 +343,63 @@ const AddItemScreen = ({ navigation, route }: any) => {
                 />
             )}
 
+            {/* Hidden WebView for Auto Detection */}
+            {shouldDetectColor && imageBase64Full && (
+                <ColorDetectorWebView
+                    imageUri={imageBase64Full}
+                    mode="auto"
+                    onColorDetected={handleColorDetected}
+                    onError={(e) => {
+                        setShouldDetectColor(false);
+                        setAutoColorLoading(false);
+                    }}
+                />
+            )}
+
+            {/* Interactive Color Picker Modal */}
+            <Modal visible={showColorPicker} animationType="slide" onRequestClose={() => setShowColorPicker(false)}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
+                    <View style={{ padding: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#111', borderBottomWidth: 1, borderBottomColor: '#333' }}>
+                        <View>
+                            <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>Pick Color</Text>
+                            <Text style={{ color: '#aaa', fontSize: 12 }}>Tap anywhere on the image to select a color</Text>
+                        </View>
+                        <TouchableOpacity onPress={() => setShowColorPicker(false)} style={{ padding: 10 }}>
+                            <Text style={{ color: theme.colors.primary, fontSize: 16, fontWeight: 'bold' }}>Done</Text>
+                        </TouchableOpacity>
+                    </View>
+                    {imageBase64Full && (
+                        <ColorDetectorWebView
+                            imageUri={imageBase64Full}
+                            mode="interactive"
+                            onColorDetected={(c) => {
+                                handleColorDetected(c);
+                                setShowColorPicker(false);
+                            }}
+                            onError={() => setShowColorPicker(false)}
+                        />
+                    )}
+                </SafeAreaView>
+            </Modal>
+
+
+
             <View style={styles.buttonRow}>
                 <TouchableOpacity style={styles.button} onPress={handleTakePhoto} disabled={isRemovingBackground}>
-                    <Text style={theme.typography.button}>📸 Camera</Text>
+                    <Text style={theme.typography.button as any}>📸 Camera</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.button} onPress={handleChoosePhoto} disabled={isRemovingBackground}>
-                    <Text style={theme.typography.button}>🖼️ Gallery</Text>
+                    <Text style={theme.typography.button as any}>🖼️ Gallery</Text>
                 </TouchableOpacity>
             </View>
 
             {imageUri && !isRemovingBackground && (
                 <TouchableOpacity style={styles.magicButton} onPress={handleRemoveBackground}>
-                    <Text style={[theme.typography.button, { fontSize: 18 }]}>🪄 Magic Remove Background</Text>
+                    <Text style={[theme.typography.button as any, { fontSize: 18 }]}>🪄 Magic Remove Background</Text>
                 </TouchableOpacity>
             )}
 
-            <Text style={[theme.typography.h2, { marginTop: 20 }]}>Category</Text>
+            <Text style={[theme.typography.h2 as any, { marginTop: 20 }]}>Category</Text>
             <View style={styles.categoryRow}>
                 {['Upper', 'Lower', 'Outer', 'Shoes'].map((cat) => (
                     <TouchableOpacity
@@ -281,31 +407,62 @@ const AddItemScreen = ({ navigation, route }: any) => {
                         style={[styles.categoryChip, category === cat && styles.selectedChip]}
                         onPress={() => setCategory(cat)}
                     >
-                        <Text style={[styles.categoryText, category === cat && styles.selectedCategoryText]}>{cat}</Text>
+                        <Text style={[styles.categoryText, category === cat && styles.selectedCategoryText] as any}>{cat}</Text>
                     </TouchableOpacity>
                 ))}
             </View>
 
-            <Text style={[theme.typography.h2, { marginTop: 20 }]}>Color {autoColorLoading ? '(Detecting...)' : ''}</Text>
+            {category !== '' && (
+                <>
+                    <Text style={[theme.typography.h2 as any, { marginTop: 20 }]}>Sub-Category</Text>
+                    <View style={styles.categoryRow}>
+                        {getSubCategories(category).map((sub) => (
+                            <TouchableOpacity
+                                key={sub}
+                                style={[styles.categoryChip, subCategory === sub && styles.selectedChip]}
+                                onPress={() => setSubCategory(sub)}
+                            >
+                                <Text style={[styles.categoryText, subCategory === sub && styles.selectedCategoryText] as any}>{sub}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </>
+            )}
+
+            <Text style={[theme.typography.h2 as any, { marginTop: 20 }]}>Color {autoColorLoading ? '(Detecting...)' : ''}</Text>
+
+
             <View style={styles.colorRow}>
-                {['#000000', '#FFFFFF', '#FF0000', '#0000FF', '#008000', '#FFFF00', '#800080', '#FFA500', '#A52A2A'].map((c) => (
-                    <TouchableOpacity
-                        key={c}
-                        style={[styles.colorCircle, { backgroundColor: c }, color === c && styles.selectedColorCircle]}
-                        onPress={() => setColor(c)}
-                    />
-                ))}
-                {/* Auto-detected color preview if not in list */}
-                {color && !['#000000', '#FFFFFF', '#FF0000', '#0000FF', '#008000', '#FFFF00', '#800080', '#FFA500', '#A52A2A'].includes(color) && (
-                    <TouchableOpacity
-                        style={[styles.colorCircle, { backgroundColor: color }, styles.selectedColorCircle]}
-                        onPress={() => { }}
-                    />
+                {/* Pick Color Button */}
+                <TouchableOpacity
+                    style={[styles.colorCircle, { backgroundColor: '#333', justifyContent: 'center', alignItems: 'center', borderColor: theme.colors.primary, borderWidth: 1 }]}
+                    onPress={() => {
+                        if (!imageBase64Full) {
+                            Alert.alert('No Image', 'Please select an image first.');
+                            return;
+                        }
+                        setShowColorPicker(true);
+                    }}
+                >
+                    <Text style={{ fontSize: 20 }}>🎨</Text>
+                </TouchableOpacity>
+
+                {/* Selected/Detected Color Display */}
+                {color ? (
+                    <View style={{ alignItems: 'center', marginLeft: 10 }}>
+                        <TouchableOpacity
+                            style={[styles.colorCircle, { backgroundColor: color }, styles.selectedColorCircle]}
+                            onPress={() => { }}
+                        />
+                        <Text style={{ color: '#aaa', fontSize: 12, marginTop: 4 }}>{color}</Text>
+                    </View>
+                ) : (
+                    <Text style={{ color: '#666', alignSelf: 'center', marginLeft: 10, fontStyle: 'italic' }}>No color selected</Text>
                 )}
             </View>
 
             <TouchableOpacity style={[styles.saveButton, { marginTop: 30, marginBottom: 50 }]} onPress={saveItem} disabled={isRemovingBackground}>
-                <Text style={theme.typography.button}>Save Item</Text>
+                <Text style={theme.typography.button as any}>Save Item</Text>
             </TouchableOpacity>
         </ScrollView>
     );

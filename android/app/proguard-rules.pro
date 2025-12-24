@@ -8,3 +8,14 @@
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
 # Add any project specific keep options here:
+-keep class com.yalantis.ucrop.** { *; }
+-keep interface com.yalantis.ucrop.** { *; }
+-keep class androidx.appcompat.** { *; } 
+-dontwarn com.yalantis.ucrop.**
+-keep class com.reactnativeimagecolors.** { *; }
+-keep class androidx.palette.** { *; }
+-keep class kotlin.** { *; }
+-keep class kotlinx.coroutines.** { *; }
+-keep class androidx.core.graphics.** { *; }
+-dontwarn com.reactnativeimagecolors.**
+-dontwarn androidx.palette.**
