@@ -6,9 +6,26 @@ export interface OutfitRequest {
     lat: number;
     lon: number;
     eventType: string; // 'Business', 'Sport', 'Casual'
+    lockedItems?: {
+        top?: any;
+        bottom?: any;
+        shoes?: any;
+        outer?: any;
+    };
 }
 
-export const generateOutfit = async ({ lat, lon, eventType }: OutfitRequest) => {
+// Helper to shuffle array for variety
+const shuffle = (array: any[]) => {
+    let currentIndex = array.length, randomIndex;
+    while (currentIndex != 0) {
+        randomIndex = Math.floor(Math.random() * currentIndex);
+        currentIndex--;
+        [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+    }
+    return array;
+};
+
+export const generateOutfit = async ({ lat, lon, eventType, lockedItems = {} }: OutfitRequest) => {
     const db = await getDBConnection();
 
     // 1. Get Weather & Thresholds
@@ -17,70 +34,108 @@ export const generateOutfit = async ({ lat, lon, eventType }: OutfitRequest) => 
     const weatherCat = weather ? getWeatherCategory(weather.weatherCode, temp) : 'Normal';
 
     // 2. Fetch All Items
-    const tops = await fetchItems(db, 'Upper');
-    const bottoms = await fetchItems(db, 'Lower');
-    const shoes = await fetchItems(db, 'Shoes');
-    const outers = await fetchItems(db, 'Outer');
+    let tops = await fetchItems(db, 'Upper');
+    let bottoms = await fetchItems(db, 'Lower');
+    let shoes = await fetchItems(db, 'Shoes');
+    let outers = await fetchItems(db, 'Outer');
 
-    // 3. Select Base Item (Bottom)
-    // Priority: Random real item
-    let bottom = bottoms.length > 0
-        ? bottoms[Math.floor(Math.random() * bottoms.length)]
-        : null;
+    // Shuffle for variety
+    tops = shuffle(tops);
+    bottoms = shuffle(bottoms);
+    shoes = shuffle(shoes);
+    outers = shuffle(outers);
 
-    // Logic: If no bottom, can't build outfit easily. Suggest buying basic jeans.
+    // Initialize with locked items or null
+    let top = lockedItems.top || null;
+    let bottom = lockedItems.bottom || null;
+    let shoe = lockedItems.shoes || null;
+    let outer = lockedItems.outer || null;
+
+    // 3. Select Anchor Item (If nothing locked, pick Bottom as anchor)
+    // If Top is locked but Bottom isn't, Top is anchor.
+    // If Bottom is locked, Bottom is anchor.
+    // Logic: Fill Bottom -> Top -> Shoes -> Outer
+
+    // 3. Select Anchor Item (If nothing locked, pick Bottom as anchor)
+    // If Top is locked but Bottom isn't, Top is anchor.
+    // If Bottom is locked, Bottom is anchor.
+    // Logic: Fill Bottom -> Top -> Shoes -> Outer
+
     if (!bottom) {
-        bottom = createGhostItem('Lower', 'Blue', 'Jeans');
-    }
-
-    // 4. Select Top (Strict Match)
-    let top = null;
-    const matchingTops = tops.filter(t => isColorMatch(bottom!.color_code, t.color_code));
-
-    // Strict Mode: Only pick if matches.
-    if (matchingTops.length > 0) {
-        // Filter by Sub-category based on weather if possible? 
-        // e.g. if Cold (<10), prefer Sweater/Hoodie
-        if (temp < 15) { // Updated Cool/Cold threshold logic
-            const warerTops = matchingTops.filter(t => ['Sweater', 'Hoodie'].includes(t.sub_type));
-            if (warerTops.length > 0) top = warerTops[Math.floor(Math.random() * warerTops.length)];
-        }
-
-        if (!top) {
-            top = matchingTops[Math.floor(Math.random() * matchingTops.length)];
-        }
-    } else {
-        // NO MATCH FOUND -> GHOST ITEM SUGGESTION
-        // Find a color that matches the bottom
-        // Simple logic: If bottom is Dark, suggest Light top. If valid color, use matcher reverse?
-        // Let's suggest a Safe color (White/Black/Grey) or complementary.
-        // For now, simpler: Suggest White or Black T-Shirt/Sweater depending on weather.
-        const suggestedColor = 'White';
-        const suggestedType = temp < 15 ? 'Sweater' : 'T-Shirt';
-        top = createGhostItem('Upper', suggestedColor, suggestedType);
-    }
-
-    // 5. Select Shoes
-    let shoe = null;
-    const matchingShoes = shoes.filter(s => isColorMatch(bottom!.color_code, s.color_code));
-    if (matchingShoes.length > 0) {
-        shoe = matchingShoes[Math.floor(Math.random() * matchingShoes.length)];
-    } else {
-        shoe = createGhostItem('Shoes', 'White', 'Sneakers');
-    }
-
-    // 6. Select Outer (If needed)
-    let outer = null;
-    // Weather Logic: < 15C needs Outer OR Heavy Top. < 10C DEFINITELY needs Outer.
-    // If raining, needs Raincoat/Jacket.
-    if (temp < 15 || weatherCat === 'Rain') {
-        const matchingOuters = outers.filter(o => isColorMatch(bottom!.color_code, o.color_code));
-        if (matchingOuters.length > 0) {
-            outer = matchingOuters[Math.floor(Math.random() * matchingOuters.length)];
+        // If Top is locked, try to find matching bottom
+        if (top) {
+            const matchingBottoms = bottoms.filter(b => isColorMatch(b.color_code, top.color_code));
+            if (matchingBottoms.length > 0) {
+                // Weather logic for bottom? (Shorts vs Jeans) - Maybe later.
+                bottom = matchingBottoms[0];
+            } else {
+                // Suggest Ghost Bottom
+                const colors = ['Black', 'Blue', 'Beige', 'Grey', 'Navy'];
+                bottom = createGhostItem('Lower', colors[Math.floor(Math.random() * colors.length)], 'Jeans');
+            }
         } else {
-            // Only suggest buying if it's strictly necessary (< 10C or Rain)
+            // No lock, pick random bottom
+            // Randomize between real items and ghost items if very few real items exist?
+            // Actually, if we have bottoms, we pick one randomly (shuffled above).
+            // Ghost Bottom if absolutely no bottoms.
+            if (bottoms.length > 0) {
+                bottom = bottoms[0];
+            } else {
+                const colors = ['Black', 'Blue', 'Beige', 'Grey', 'Navy'];
+                bottom = createGhostItem('Lower', colors[Math.floor(Math.random() * colors.length)], 'Jeans');
+            }
+        }
+    }
+
+    // 4. Select Top (If not locked/picked)
+    if (!top) {
+        const matchingTops = tops.filter(t => isColorMatch(bottom.color_code, t.color_code));
+
+        if (matchingTops.length > 0) {
+            // Weather Logic
+            if (temp < 15) {
+                const warmerTops = matchingTops.filter(t => ['Sweater', 'Hoodie'].includes(t.sub_type));
+                if (warmerTops.length > 0) top = warmerTops[0];
+            }
+            if (!top) top = matchingTops[0];
+        } else {
+            // Ghost Top - RANDOMIZE
+            // Previously: bottom.color_code === 'Black' ? 'White' : 'Black';
+            // Now: Pick from a few safe options or randomized.
+            const validColors = ['White', 'Black', 'Grey', 'Beige', 'Navy'].filter(c => isColorMatch(bottom.color_code, c));
+            const suggestedColor = validColors.length > 0 ? validColors[Math.floor(Math.random() * validColors.length)] : 'White';
+
+            const suggestedType = temp < 15
+                ? (Math.random() > 0.5 ? 'Sweater' : 'Hoodie')
+                : (Math.random() > 0.5 ? 'T-Shirt' : 'Shirt');
+
+            top = createGhostItem('Upper', suggestedColor, suggestedType);
+        }
+    }
+
+    // 5. Select Shoes (If not locked)
+    if (!shoe) {
+        const matchingShoes = shoes.filter(s => isColorMatch(bottom.color_code, s.color_code));
+        if (matchingShoes.length > 0) {
+            shoe = matchingShoes[0];
+        } else {
+            const shoeColors = ['White', 'Black'].filter(c => isColorMatch(bottom.color_code, c));
+            const shoeColor = shoeColors.length > 0 ? shoeColors[Math.floor(Math.random() * shoeColors.length)] : 'White';
+            shoe = createGhostItem('Shoes', shoeColor, 'Sneakers');
+        }
+    }
+
+    // 6. Select Outer (If needed & not locked)
+    if (!outer && (temp < 15 || weatherCat === 'Rain')) {
+        const matchingOuters = outers.filter(o => isColorMatch(bottom.color_code, o.color_code));
+        if (matchingOuters.length > 0) {
+            outer = matchingOuters[0];
+        } else {
             if (temp < 10 || weatherCat === 'Rain') {
-                outer = createGhostItem('Outer', 'Black', weatherCat === 'Rain' ? 'Raincoat' : 'Jacket');
+                const outerColors = ['Black', 'Navy', 'Camel', 'Grey'].filter(c => isColorMatch(bottom.color_code, c));
+                const outerColor = outerColors.length > 0 ? outerColors[Math.floor(Math.random() * outerColors.length)] : 'Black';
+                const type = weatherCat === 'Rain' ? 'Raincoat' : (Math.random() > 0.5 ? 'Jacket' : 'Coat');
+                outer = createGhostItem('Outer', outerColor, type);
             }
         }
     }

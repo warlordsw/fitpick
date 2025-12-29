@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Center scaling -->
+    <group android:translateX="27" android:translateY="27">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M27,10 C27,7 29,5 32,5 C34,5 35,6 35,7 L37,7 C37,4 34,2 32,2 C28,2 25,5 25,9 L7,24 L9,26 L12,24 L12,46 C12,48 14,50 16,50 L38,50 C40,50 42,48 42,46 L42,24 L45,26 L47,24 L29,9 M30,12 L43,22 L11,22 L24,12 L30,12 Z"/>
+        <!-- A simple checkmark or sparkle for "Best Pick" -->
+        <path
+            android:fillColor="#03DAC6"
+            android:pathData="M38,35 L48,35 L48,38 L38,38 Z M41.5,31.5 L44.5,31.5 L44.5,41.5 L41.5,41.5 Z"
+            android:rotation="45"
+            android:pivotX="43"
+            android:pivotY="36.5"
+            />
+    </group>
+</vector>
